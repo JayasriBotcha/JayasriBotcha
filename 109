@@ -1,0 +1,424 @@
+/// <summary>
+/// A service class is created to implement the logic for updating the record.
+/// </summary>
+class earth_ls_0109Service extends SysOperationServiceBase
+ {
+    str                                 msg;
+    RecordInsertList                    insertList;
+    earth_ls_dp_Order_Lines_Interface   orderLinesInterface;
+    int                                 processFlg;
+    boolean                             success = false;
+      /// <summary>
+      /// This method is to process the records.
+      /// </summary>
+    public void processOperation()
+    {
+        smmParametersTable  smmParametersTable;
+
+        info("@SYS88002");
+        smmParametersTable.clear();
+        select firstonly crosscompany earth_dp_SalesChannelId_ConsumablesOrder, RecId
+            from smmParametersTable
+            where smmParametersTable.earth_dp_WholesaleOrderCorpFlag == NoYes::Yes;
+
+        if (!smmParametersTable.earth_dp_SalesChannelId_ConsumablesOrder)
+        {
+            throw error(strFmt("@earth:EARTHDPE030202","@SYS336348", "@earth:earth_dp_04009"));
+        }
+
+        info("@SYS80175");
+        this.processOrderInterface(smmParametersTable);
+        if (processFlg)
+        {
+            error(strFmt("@SYS116033", "@earth:earth_dp_03417"));
+        }
+        // Common call process.
+        earth_dp_04080InfoAllocationService::salesOrderInfoAllocation(earth_dp_ConsumablesOrderSourceType::XeSD);
+        earth_dp_04080CreateSalesOrderService::createSalesOrders(earth_dp_ConsumablesOrderSourceType::XeSD);
+        if (success)
+        {
+            info(strFmt("@SYS116029","@earth:earth_dp_03417"));
+        }
+     }
+
+     /// <summary>
+     /// Checks for the mandatory conditions.
+     /// </summary>
+     /// <param name = "_qr">Query not be modified.</param>
+     /// <returns>Returns Map value of errorRecords.</returns>
+    private Map consistencyCheckError(Query _qr)
+    {
+        InventLocation              inventLocation;
+        earth_dp_InventManageType   inventManageType;
+        earth_dp_deliveryTo         deliveryTo;
+        earth_dp_ErrorMessage       errorMsg;
+        earth_dp_XeSDOrderIF        xeSDOrderIFline;
+        Map                         errorRecords  = new Map(Types::Int64, Types::String);
+        QueryRun                    queryOriginal = new QueryRun(_qr);
+        // Run the Query.
+        while (queryOriginal.next())
+        {
+            xeSDOrderIFline = queryOriginal.get(tableNum(earth_dp_XeSDOrderIF));
+            // Re-setting the error message since it is in a loop.
+            errorMsg = strMin();
+            // To Extract the InventOrganizationCode from earth_dp_InventManageType.
+            select firstonly InventManageType, InventOrganizationId from inventManageType
+                    where inventManageType.InventManageType == xeSDOrderIFline.InventManageTypeId;
+
+            // To Extract the InventLocationId from InventLocation.
+            select firstonly InventLocationId from inventLocation
+                    where inventlocation.InventLocationId == xeSDOrderIFline.StorageLocationCode;
+
+            // To Extract classification viasalesgoodsdealer(DealerForSaleViaClass).
+            select firstonly DealerForSaleViaClass,ContractNumber from deliveryTo
+                    where deliveryTo.ContractNumber == xeSDOrderIFline.ContractNumber;
+
+            // If the OrderSourceRef is null, an error occur.
+            if (!xeSDOrderIFline.OrderSourceRef)
+            {
+                errorMsg = strFmt("@earth:EARTHDPE030375", "@earth:earth_dp_02935", xeSDOrderIFline.RecId);
+            }
+            // If the shiptoname is null, an error occur.
+            else if (!xeSDOrderIFline.ShipToName)
+            {
+                errorMsg = strFmt("@earth:EARTHDPE030375", "@earth:earth_dp_03246", xeSDOrderIFline.RecId);
+            }
+            // If the shiptoaddress is null, an error occur.
+            else if (!xeSDOrderIFline.ShipToAddress)
+            {
+                errorMsg = strFmt("@earth:EARTHDPE030375", "@earth:earth_dp_03247", xeSDOrderIFline.RecId);
+            }
+            // If OrigSysDocumentRef is null, an error occur.
+            else if (!xeSDOrderIFline.OrigSysDocumentRef)
+            {
+                errorMsg = strFmt("@earth:EARTHDPE030375", "@earth:earth_dp_03257", xeSDOrderIFline.RecId);
+            }
+            // If quantity is null or is less than or equal to 0, an error occur.
+            else if (!xeSDOrderIFline.Quantity || !(str2Num(xeSDOrderIFline.Quantity) > earth_ls_Constants::realNullValue))
+            {
+                errorMsg = strFmt("@earth:EARTHDPE030376", "@SYS3065", xeSDOrderIFline.RecId);
+            }
+            // If SalesUnitPrice not available in xeSDOrderIf table.
+            else if (!xeSDOrderIFline.SalesUnitPrice || !(str2Num(xeSDOrderIFline.SalesUnitPrice) > earth_ls_Constants::realNullValue))
+            {
+                errorMsg = strFmt("@earth:EARTHDPE030376", "@SYS3987", xeSDOrderIFline.RecId);
+            }
+            // IF the above condition fails to  Extract inventOrganizationId then throws an error.
+            else if (!inventManageType.InventOrganizationId)
+            {
+                errorMsg = strFmt("@earth:EARTHDPE030375", "@earth:earth_dp_00240", xeSDOrderIFline.RecId);
+            }
+            // If the above condition fails to extarct inventLocationId then throws an error.
+            else if (!inventLocation.InventLocationId)
+            {
+                errorMsg = strFmt("@earth:EARTHDPE030375", "@earth:earth_dp_02510", xeSDOrderIFline.RecId);
+            }
+            // If the above condition fails to extarct DealerForSaleViaClass then throws an error.
+            else if (!deliveryTo.DealerForSaleViaClass)
+            {
+                errorMsg = strFmt("@earth:EARTHDPE030375", "@earth:earth_dp_03975", xeSDOrderIFline.RecId);
+            }
+            // If SystemCode not available in xeSDOrderIf table.
+            else if (!((xeSDOrderIFline.SystemCode == earth_ls_Constants::zero && deliveryTo.DealerForSaleViaClass == earth_md_SalesDealerType::None) ||
+                      (xeSDOrderIFline.SystemCode  == earth_ls_Constants::one && deliveryTo.DealerForSaleViaClass  == earth_md_SalesDealerType::ViaDealer) ||
+                      (xeSDOrderIFline.SystemCode  == earth_ls_Constants::one && deliveryTo.DealerForSaleViaClass  == earth_md_SalesDealerType::ViaDealer_NeedConfirm)))
+            {
+                errorMsg = strFmt("@earth:EARTHDPE030376", "@earth:earth_dp_03975", xeSDOrderIFline.RecId);
+            }
+            if (errorMsg)
+            {
+                errorRecords.insert(xeSDOrderIFline.RecId, errorMsg);
+                error(errorMsg);
+            }
+        }
+        return errorRecords;
+    }
+
+    /// <summary>
+    /// Process records based on query crteria.
+    /// </summary>
+    /// <param name = "_smmParametersTable">Buffer of _smmParametersTable Table.</param> 
+    private void processOrderInterface(smmParametersTable _smmParametersTable)
+    {
+        earth_dp_XeSDOrderIF          xeSDOrderIFheader,
+                                      xeSDOrderIFline;
+        earth_ls_dp_Order_Interface   orderInterfaceTable;
+        Query                         query,
+                                      qline;
+        QueryRun                      qrheader,
+                                      qrline;
+        earth_ls_OrigSysDocumentRef   prevOrderSourceRef;
+        Map                           consistencyCheck;
+        List                          updateRecordList;
+        ListEnumerator                statusUpdate;
+
+        // Query with groupby conditions.
+        query       = new Query(queryStr(earth_ls_XeSDOrderDataImportIFQuery));
+        qrheader    = new QueryRun(query);
+        //If there exists Zero records it will throw an error
+        if (!SysQuery::countTotal(qrheader))
+        {
+            info("@SYS107537");
+            return;
+        }
+        while (qrheader.next())
+        {
+            // Getting data sources from above query.
+            xeSDOrderIFheader = qrheader.get(tableNum(earth_dp_XeSDOrderIF));
+
+            // Creating a new Query.
+            qline = new Query(queryStr(earth_ls_XeSDOrderDataImportIFLineQuery));
+            qLine.dataSourceTable(tableNum(earth_dp_XeSDOrderIF)).addRange(fieldNum(earth_dp_XeSDOrderIF, OrderSourceRef)).
+                value(xeSDOrderIFheader.OrderSourceRef);
+            try
+            {
+                prevOrderSourceRef = null;
+                updateRecordList   = new List(Types::Int64);
+                insertList         = new RecordInsertList(tableNum(earth_ls_dp_Order_Lines_Interface), false, false, false, false, false, orderLinesInterface);
+                consistencyCheck   = this.consistencyCheckError(qLine);
+                // Begin of transaction.
+                ttsbegin;
+                qrline = new QueryRun(qline);
+                while (qrline.next())
+                {
+                    xeSDOrderIFline = qrline.get(tableNum(earth_dp_XeSDOrderIF));
+                    // Checking for Consistency Check Detail.
+                    if (consistencyCheck.exists(xeSDOrderIFline.RecId))
+                    {
+                        if (!prevOrderSourceRef)
+                        {
+                            orderInterfaceTable = this.insertIntoOrderInterfaceTable(xeSDOrderIFline, earth_ls_Constants::ErrorFlag_Yes);
+                            prevOrderSourceRef  = orderInterfaceTable.OrigSysDocumentRef;
+                        }
+                        this.insertIntoOrderLinesInterface(_smmParametersTable, xeSDOrderIFline, orderInterfaceTable, earth_ls_Constants::ErrorFlag_Yes, 
+                                                                consistencyCheck.lookup(xeSDOrderIFline.RecId));
+                    }
+                    else
+                    {
+                        if (!prevOrderSourceRef)
+                        {
+                            orderInterfaceTable = this.insertIntoOrderInterfaceTable(xeSDOrderIFline, strMin());
+                            prevOrderSourceRef  = orderInterfaceTable.OrigSysDocumentRef;
+                        }
+                        this.insertIntoOrderLinesInterface(_smmParametersTable, xeSDOrderIFline, orderInterfaceTable, strMin(), strMin());
+                    }
+                    updateRecordList.addEnd(xeSDOrderIFline.RecId);
+                }
+                // Inserting all the Line Records at once.
+                insertList.insertDatabase();
+                // End transaction.
+                ttscommit;
+                success = true;
+            }
+            catch
+            {
+                System.Exception ex = CLRInterop::getLastException();
+
+                if (ex)
+                {
+                    error(ex.ToString());
+                }
+
+                processFlg = earth_ls_Constants::Header;
+            }
+            // Start of the status update loop.
+            statusUpdate = updateRecordList.getEnumerator();
+            while (statusUpdate.moveNext())
+            {
+                if (consistencyCheck.exists(statusUpdate.current()))
+                {
+                    this.updateXesOrderDataIF(statusUpdate.current(), consistencyCheck.lookup(statusUpdate.current()));
+                }
+                else
+                {
+                    this.updateXesOrderDataIF(statusUpdate.current(), strMin());
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Insert into Header Table.
+    /// </summary>
+    /// <param name = "_xeSDOrderIFline">Buffer of _xeSDOrderIFline.</param>
+    /// <param name = "_errorFlag"> Y/strMin() Value.</param>
+    /// <returns>Record of orderInterfaceTable.</returns>
+    private earth_ls_dp_Order_Interface insertIntoOrderInterfaceTable(earth_dp_XeSDOrderIF _xeSDOrderIFline,
+                                                                        earth_ls_ErrorFlag _errorFlag)
+    {
+        earth_ls_dp_Order_Interface orderInterfaceTable;
+        int64                       orderIFID;
+
+        orderIFID                                = str2Int64(this.generateHeaderNumSeq(_xeSDOrderIFline));
+        orderInterfaceTable.OrderIFID            = orderIFID;
+        orderInterfaceTable.ContractNumber       = _xeSDOrderIFline.ContractNumber;
+        orderInterfaceTable.ShipToName           = _xeSDOrderIFline.ShipToName;
+        orderInterfaceTable.ShipToAddress        = _xeSDOrderIFline.ShipToAddress;
+        orderInterfaceTable.ShipToAddressNum     = _xeSDOrderIFline.ShipToAddressNum;
+        orderInterfaceTable.AddressCode          = _xeSDOrderIFline.LocationCode;
+        orderInterfaceTable.SystemCode           = _xeSDOrderIFline.SystemCode;
+        orderInterfaceTable.ShipToDivision       = _xeSDOrderIFline.ShipToDivision;
+        orderInterfaceTable.ShipToBuilding       = _xeSDOrderIFline.ShipToBuilding;
+        orderInterfaceTable.ShipToFloor          = _xeSDOrderIFline.ShipToFloor;
+        orderInterfaceTable.CustomerTelNumber    = _xeSDOrderIFline.CustomerTelNumber;
+        orderInterfaceTable.OrderContact         = _xeSDOrderIFline.OrderContact;
+        orderInterfaceTable.FxOrderedContact     = _xeSDOrderIFline.SalesResponsibleName;
+        orderInterfaceTable.CustomerPoN          = _xeSDOrderIFline.CustomerPoNumber;
+        orderInterfaceTable.ReturnFlag           = _xeSDOrderIFline.CollectionFlag;
+        orderInterfaceTable.OrderedInstructions  = _xeSDOrderIFline.OrderedInstructions;
+        orderInterfaceTable.ShippingInstructions = _xeSDOrderIFline.ShipmentInstruction;
+        orderInterfaceTable.OrderSourceName      = _xeSDOrderIFline.OrderSourceName;
+        orderInterfaceTable.OrigSysDocumentRef   = _xeSDOrderIFline.OrderSourceRef;
+        if (_xeSDOrderIFline.ShippingPriority == earth_ls_Constants::one)
+        {
+            orderInterfaceTable.ShipmentPriorityCode = earth_ls_Constants::one;
+        }
+        else if (_xeSDOrderIFline.ShippingPriority == earth_ls_Constants::two)
+        {
+            orderInterfaceTable.ShipmentPriorityCode = earth_ls_Constants::zero;
+        }
+        orderInterfaceTable.DeliverFromType      = _xeSDOrderIFline.DeliveryType;
+        orderInterfaceTable.RequestDate          = str2Date(_xeSDOrderIFline.SpecifiedDeliveryDate,321);
+        orderInterfaceTable.ErrorFlag            = _errorFlag;
+        orderInterfaceTable.Status               = earth_ls_Constants::Status;
+        orderInterfaceTable.OperationCode        = earth_ls_Constants::OperationCode;
+
+        if (orderInterfaceTable.validateWrite())
+        {
+            orderInterfaceTable.insert();
+        }
+        return orderInterfaceTable;
+    }
+
+    /// <summary>
+    /// Generates Number sequence based on the parametr that is being selected for Header.
+    /// </summary>
+    /// <param name = "_xeSDOrderIFline">Buffer of earth_dp_XeSDOrderIF.</param>
+    /// <returns>Value of orderLinesIFID.</returns>
+    private earth_dp_OrderSourceName generateHeaderNumSeq(earth_dp_XeSDOrderIF _xeSDOrderIFline)
+    {
+        earth_dp_OrderSourceName    orderLinesIFID;
+
+        if (_xeSDOrderIFline.OrderSourceName == earth_ls_Constants::earth_dp_Convert32OrderLineIFID)
+        {
+            orderLinesIFID = NumberSeq::newGetNum(NumberSeqReference::findReference(extendedTypeNum(earth_dp_Convert32OrderIFID))).num();
+        }
+        else if (_xeSDOrderIFline.OrderSourceName == earth_ls_Constants::earth_dp_Convert33OrderLineIFID)
+        {
+            orderLinesIFID = NumberSeq::newGetNum(NumberSeqReference::findReference(extendedTypeNum(earth_dp_Convert33OrderIFID))).num();
+        }
+        else if (_xeSDOrderIFline.OrderSourceName == earth_ls_Constants::earth_dp_Convert34OrderLineIFID)
+        {
+            orderLinesIFID = NumberSeq::newGetNum(NumberSeqReference::findReference(extendedTypeNum(earth_dp_Convert34OrderIFID))).num();
+        }
+        else if (_xeSDOrderIFline.OrderSourceName == earth_ls_Constants::earth_dp_Convert35OrderLineIFID)
+        {
+            orderLinesIFID = NumberSeq::newGetNum(NumberSeqReference::findReference(extendedTypeNum(earth_dp_Convert35OrderIFID))).num();
+        }
+        else if (_xeSDOrderIFline.OrderSourceName == earth_ls_Constants::earth_dp_Convert36OrderLineIFID)
+        {
+            orderLinesIFID = NumberSeq::newGetNum(NumberSeqReference::findReference(extendedTypeNum(earth_dp_Convert36OrderIFID))).num();
+        }
+        else if (_xeSDOrderIFline.OrderSourceName == earth_ls_Constants::earth_dp_Convert37OrderLineIFID)
+        {
+            orderLinesIFID = NumberSeq::newGetNum(NumberSeqReference::findReference(extendedTypeNum(earth_dp_Convert37OrderIFID))).num();
+        }
+        else if (_xeSDOrderIFline.OrderSourceName == earth_ls_Constants::earth_dp_Convert38OrderLineIFID)
+        {
+            orderLinesIFID = NumberSeq::newGetNum(NumberSeqReference::findReference(extendedTypeNum(earth_dp_Convert38OrderIFID))).num();
+        }
+        return orderLinesIFID;
+    }
+
+    /// <summary>
+    /// Generates Number sequence based on the parametr that is being selected for Lines.
+    /// </summary>
+    /// <param name = "_xeSDOrderIFline">Buffer of earth_dp_XeSDOrderIF.</param>
+    /// <returns>Value of orderLinesIFID.</returns>
+    private earth_dp_OrderSourceName generateLineNumSeq(earth_dp_XeSDOrderIF _xeSDOrderIFline)
+    {
+        earth_dp_OrderSourceName    orderLinesIFID;
+
+        if (_xeSDOrderIFline.OrderSourceName == earth_ls_Constants::earth_dp_Convert32OrderLineIFID)
+        {
+            orderLinesIFID = NumberSeq::newGetNum(NumberSeqReference::findReference(extendedTypeNum(earth_dp_Convert32OrderLineIFID))).num();
+        }
+        else if (_xeSDOrderIFline.OrderSourceName == earth_ls_Constants::earth_dp_Convert33OrderLineIFID)
+        {
+            orderLinesIFID = NumberSeq::newGetNum(NumberSeqReference::findReference(extendedTypeNum(earth_dp_Convert33OrderLineIFID))).num();
+        }
+        else if (_xeSDOrderIFline.OrderSourceName == earth_ls_Constants::earth_dp_Convert34OrderLineIFID)
+        {
+            orderLinesIFID = NumberSeq::newGetNum(NumberSeqReference::findReference(extendedTypeNum(earth_dp_Convert34OrderLineIFID))).num();
+        }
+        else if (_xeSDOrderIFline.OrderSourceName == earth_ls_Constants::earth_dp_Convert35OrderLineIFID)
+        {
+            orderLinesIFID = NumberSeq::newGetNum(NumberSeqReference::findReference(extendedTypeNum(earth_dp_Convert35OrderLineIFID))).num();
+        }
+        else if (_xeSDOrderIFline.OrderSourceName == earth_ls_Constants::earth_dp_Convert36OrderLineIFID)
+        {
+            orderLinesIFID = NumberSeq::newGetNum(NumberSeqReference::findReference(extendedTypeNum(earth_dp_Convert36OrderLineIFID))).num();
+        }
+        else if (_xeSDOrderIFline.OrderSourceName == earth_ls_Constants::earth_dp_Convert37OrderLineIFID)
+        {
+            orderLinesIFID = NumberSeq::newGetNum(NumberSeqReference::findReference(extendedTypeNum(earth_dp_Convert37OrderLineIFID))).num();
+        }
+        else if (_xeSDOrderIFline.OrderSourceName == earth_ls_Constants::earth_dp_Convert38OrderLineIFID)
+        {
+            orderLinesIFID = NumberSeq::newGetNum(NumberSeqReference::findReference(extendedTypeNum(earth_dp_Convert38OrderLineIFID))).num();
+        }
+        return orderLinesIFID;
+    }
+
+    /// <summary>
+    /// Insert into OrderLineInterface Table
+    /// </summary>
+    /// <param name = "_smmParametersTable">Buffer of _smmParametersTable.</param>
+    /// <param name = "_xeSDOrderIFline">Buffer of _xeSDOrderIFline.</param>
+    /// <param name = "_orderInterfaceTable">Buffer of _orderInterfaceTable.</param>
+    /// <param name = "_errorFlag"> Y/strMin() Value.</param>
+    /// <param name = "_interfaceInfo"> Y/strMin() Value.</param>
+    private void insertIntoOrderLinesInterface(smmParametersTable _smmParametersTable,
+                                                earth_dp_XeSDOrderIF _xeSDOrderIFline,
+                                                earth_ls_dp_Order_Interface   _orderInterfaceTable,
+                                                earth_ls_ErrorFlag _errorFlag,
+                                                earth_ls_InterfaceInfo  _interfaceInfo)
+    {
+        orderLinesInterface.OrderLinesIFID         = str2Int64(this.generateLineNumSeq(_xeSDOrderIFline));
+        orderLinesInterface.OrigSysLineRef         = _xeSDOrderIFline.OrderSourceRef;
+        orderLinesInterface.SpecifiedTime          = _xeSDOrderIFline.SpecifiedTime;
+        orderLinesInterface.OrganizationCode       = _xeSDOrderIFline.InventManageTypeId;
+        orderLinesInterface.SecondaryInventoryName = _xeSDOrderIFline.LocationCode;
+        orderLinesInterface.ItemId                 = _xeSDOrderIFline.ItemCode;
+        orderLinesInterface.SalesQty               = str2Num(_xeSDOrderIFline.Quantity);
+        orderLinesInterface.SalesPrice             = str2Num(_xeSDOrderIFline.SalesUnitPrice);
+        orderLinesInterface.ErrorFlag              = _errorFlag;
+        orderLinesInterface.InterfaceInfo          = _interfaceInfo;
+        orderLinesInterface.OrderIFID              = _orderInterfaceTable.OrderIFID;
+        orderLinesInterface.SalesChannelId         = _smmParametersTable.earth_dp_SalesChannelId_ConsumablesOrder;
+
+        if (orderLinesInterface.validateWrite())
+        {
+            // Adding all lines into a RecordInsertList.
+            insertList.add(orderLinesInterface);
+        }
+    }
+
+    /// <summary>
+    /// Updates the Records Based on the value.
+    /// </summary>
+    /// <param name = "_xeSDOrderIFline">Buffer of xeSDOrderIFline.</param>
+    /// <param name = "_errorMsg">Value of Error or strMin() value.</param>
+    private void updateXesOrderDataIF(RecId _xeSDOrderIFline, earth_dp_ErrorMessage _errorMsg)
+    {
+        earth_dp_XeSDOrderIF    xesdOrderIFUpd;
+
+        ttsbegin;
+        update_recordset xesdOrderIFUpd
+            setting ProcessedFlag = NoYes::Yes,
+                    ErrorMessage  = _errorMsg
+            where xesdOrderIFUpd.RecId == _xeSDOrderIFline;
+        ttscommit;
+    }
+
+}
